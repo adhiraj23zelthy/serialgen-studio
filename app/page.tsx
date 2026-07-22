@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { CodeCard } from '@/components/CodeCard';
 import { validateGtin, buildUnitCode, appKey, expiryToYYMMDD, parseHierarchyRow } from '@/lib/gs1';
+import { parseEPCISXML } from '@/lib/epcis-parser';
 import Papa from 'papaparse';
 import Link from 'next/link';
 
@@ -46,43 +47,92 @@ export default function Home() {
     setParsedUnits([]);
     setErrors([]);
 
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const units: ProcessedUnit[] = [];
-        const parseErrors: any[] = [];
+    // Detect file type
+    const isXML = file.name.toLowerCase().endsWith('.xml');
+    const isCSV = file.name.toLowerCase().endsWith('.csv');
 
-        results.data.forEach((row: any, index) => {
-          const parsed = parseHierarchyRow(row);
+    if (isXML) {
+      // Handle EPCIS XML
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const xmlContent = event.target?.result as string;
+          const result = parseEPCISXML(xmlContent);
 
-          if ('error' in parsed) {
-            parseErrors.push({ rowNumber: index + 2, error: parsed.error, row: parsed.row });
-          } else {
-            const code = buildUnitCode(parsed.gtin, parsed.serial, {
+          const units: ProcessedUnit[] = result.units.map((unit) => {
+            const code = buildUnitCode(unit.gtin, unit.serial, {
               mode: 'gs1',
-              lot: includeLotExpiry ? parsed.lot : undefined,
-              expiryYYMMDD: includeLotExpiry ? parsed.expiryYYMMDD : undefined,
+              lot: includeLotExpiry ? unit.lot : undefined,
+              expiryYYMMDD: includeLotExpiry ? unit.expiryYYMMDD : undefined,
             });
 
-            units.push({
-              ...parsed,
-              appKey: appKey(parsed.gtin, parsed.serial),
+            return {
+              ...unit,
+              appKey: appKey(unit.gtin, unit.serial),
               code,
-            });
-          }
-        });
+            };
+          });
 
-        setParsedUnits(units);
-        setErrors(parseErrors);
+          setParsedUnits(units);
+          setErrors(result.errors.map((err, i) => ({
+            rowNumber: i + 1,
+            error: err.error,
+          })));
+          setLoading(false);
+        } catch (error) {
+          console.error('XML parsing error:', error);
+          setErrors([{ error: error instanceof Error ? error.message : 'Failed to parse XML' }]);
+          setLoading(false);
+        }
+      };
+      reader.onerror = () => {
+        setErrors([{ error: 'Failed to read XML file' }]);
         setLoading(false);
-      },
-      error: (error) => {
-        console.error('CSV parsing error:', error);
-        setErrors([{ error: error.message }]);
-        setLoading(false);
-      },
-    });
+      };
+      reader.readAsText(file);
+    } else if (isCSV) {
+      // Handle CSV
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const units: ProcessedUnit[] = [];
+          const parseErrors: any[] = [];
+
+          results.data.forEach((row: any, index) => {
+            const parsed = parseHierarchyRow(row);
+
+            if ('error' in parsed) {
+              parseErrors.push({ rowNumber: index + 2, error: parsed.error, row: parsed.row });
+            } else {
+              const code = buildUnitCode(parsed.gtin, parsed.serial, {
+                mode: 'gs1',
+                lot: includeLotExpiry ? parsed.lot : undefined,
+                expiryYYMMDD: includeLotExpiry ? parsed.expiryYYMMDD : undefined,
+              });
+
+              units.push({
+                ...parsed,
+                appKey: appKey(parsed.gtin, parsed.serial),
+                code,
+              });
+            }
+          });
+
+          setParsedUnits(units);
+          setErrors(parseErrors);
+          setLoading(false);
+        },
+        error: (error) => {
+          console.error('CSV parsing error:', error);
+          setErrors([{ error: error.message }]);
+          setLoading(false);
+        },
+      });
+    } else {
+      setErrors([{ error: 'Unsupported file type. Please upload a CSV or XML file.' }]);
+      setLoading(false);
+    }
   };
 
   const filteredUnits = parsedUnits.filter((unit) => {
@@ -254,13 +304,13 @@ export default function Home() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv"
+                    accept=".csv,.xml"
                     onChange={handleFileUpload}
                     className="hidden"
-                    id="csv-upload"
+                    id="file-upload"
                   />
                   <label
-                    htmlFor="csv-upload"
+                    htmlFor="file-upload"
                     className="cursor-pointer flex items-center gap-3 p-4 border-2 border-dashed border-slate-300 rounded-lg hover:border-slate-400 hover:bg-slate-50 transition-all group"
                   >
                     <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0 group-hover:bg-slate-200 transition-colors">
@@ -270,10 +320,10 @@ export default function Home() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-900 group-hover:text-slate-700">
-                        Click to upload CSV file
+                        Click to upload CSV or EPCIS XML file
                       </p>
                       <p className="text-xs text-slate-500 mt-0.5 truncate">
-                        Supports hierarchy format with serial numbers and metadata
+                        Supports CSV hierarchy format or EPCIS 1.1/1.2 XML
                       </p>
                     </div>
                     <div className="hidden sm:block shrink-0">

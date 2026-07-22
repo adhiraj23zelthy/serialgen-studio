@@ -21,6 +21,12 @@ Professional GS1-compliant barcode generator for pharmaceutical serialization an
 - `parseHierarchyRow()` - Smart CSV parsing (element-string + app-key formats)
 - `appKey()` - Mobile identifier (GTIN + Serial)
 
+### EPCIS Parser (`lib/epcis-parser.ts`)
+- `parseSGTIN()` - Parse SGTIN URN to GTIN-14 + Serial
+- `parseSSCC()` - Parse SSCC URN to SSCC-18
+- `parseEPCISXML()` - Parse EPCIS 1.1/1.2 XML with ObjectEvents & AggregationEvents
+- Extracts vials, cases, pallets with lot/expiry from SAP extensions
+
 ### Components
 - `CodeCard` - Reusable barcode display with copy/download
 
@@ -32,11 +38,13 @@ Professional GS1-compliant barcode generator for pharmaceutical serialization an
 
 ## Key Features
 - Batch processing with progress tracking (50-item batches)
+- **Dual file format support**: CSV hierarchy + EPCIS XML
 - Pagination (100 items/page)
 - GTIN check digit validation
 - Multiple date format support (YYMMDD, YYYY-MM-DD, etc.)
 - Optional lot/expiry encoding toggle
 - Bulk ZIP downloads (units/cases/pallets folders)
+- EPCIS 1.1/1.2 XML parsing with SGTIN/SSCC URN support
 
 ## Performance Notes
 - Use `dontlint: true` for gs1datamatrix to bypass GTIN validation
