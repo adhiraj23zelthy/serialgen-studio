@@ -174,6 +174,45 @@ export function appKey(gtin14: string, serial: string): string {
 }
 
 /**
+ * Parse combined GTIN+Serial string (app key format)
+ * Tries to extract GTIN and Serial from concatenated string
+ * Supports 8/12/13/14 digit GTINs
+ */
+export function parseCombinedGtinSerial(combined: string): {
+  gtin: string;
+  serial: string;
+} | { error: string } {
+  // Remove any non-alphanumeric characters
+  const cleaned = combined.replace(/[^a-zA-Z0-9]/g, '');
+
+  if (cleaned.length < 9) {
+    return { error: 'Combined string too short (minimum 9 characters for GTIN-8 + serial)' };
+  }
+
+  // Try different GTIN lengths (14, 13, 12, 8) - most common first
+  const gtinLengths = [14, 13, 12, 8];
+
+  for (const gtinLength of gtinLengths) {
+    if (cleaned.length > gtinLength) {
+      const potentialGtin = cleaned.substring(0, gtinLength);
+      const potentialSerial = cleaned.substring(gtinLength);
+
+      // Check if GTIN part is all digits
+      if (/^\d+$/.test(potentialGtin) && potentialSerial.length > 0) {
+        // Pad GTIN to 14 digits
+        const gtin14 = potentialGtin.padStart(14, '0');
+        return {
+          gtin: gtin14,
+          serial: potentialSerial,
+        };
+      }
+    }
+  }
+
+  return { error: 'Unable to parse combined string. Expected format: GTIN (8/12/13/14 digits) + Serial' };
+}
+
+/**
  * Convert various expiry date formats to YYMMDD
  * Accepts: YYYY-MM-DD, YYMMDD, DD/MM/YYYY, etc.
  */
