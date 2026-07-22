@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { CodeCard } from '@/components/CodeCard';
-import { buildUnitCode, appKey, validateGtin } from '@/lib/gs1';
+import { buildUnitCode, appKey, validateGtin, parseCombinedGtinSerial } from '@/lib/gs1';
 import Link from 'next/link';
 
 export default function SerializationPage() {
@@ -10,8 +10,12 @@ export default function SerializationPage() {
   const [serial, setSerial] = useState('3000000000000013');
   const [lot, setLot] = useState('LOT002');
   const [expiry, setExpiry] = useState('290630');
-  const [mode, setMode] = useState<'gs1' | 'plain'>('gs1');
+  const [mode, setMode] = useState<'gs1' | 'plain' | 'combined' | 'gs1-no-lot'>('combined');
   const [enforceCheckDigit, setEnforceCheckDigit] = useState(false);
+
+  // Combined input mode
+  const [combinedInput, setCombinedInput] = useState('123456000012343000000000000013');
+  const [parseError, setParseError] = useState<string | null>(null);
 
   const [gtinValidation, setGtinValidation] = useState<ReturnType<typeof validateGtin> | null>(null);
   const [generatedCode, setGeneratedCode] = useState<ReturnType<typeof buildUnitCode> | null>(null);
@@ -32,13 +36,31 @@ export default function SerializationPage() {
 
   const handleGenerate = () => {
     try {
-      const code = buildUnitCode(gtin, serial, {
-        mode,
-        lot: mode === 'gs1' ? lot : undefined,
-        expiryYYMMDD: mode === 'gs1' ? expiry : undefined,
+      let finalGtin = gtin;
+      let finalSerial = serial;
+
+      // If combined mode, parse the combined input first
+      if (mode === 'combined') {
+        const parsed = parseCombinedGtinSerial(combinedInput);
+        if ('error' in parsed) {
+          setParseError(parsed.error);
+          return;
+        }
+        finalGtin = parsed.gtin;
+        finalSerial = parsed.serial;
+        setParseError(null);
+        // Update individual fields for display
+        setGtin(parsed.gtin);
+        setSerial(parsed.serial);
+      }
+
+      const code = buildUnitCode(finalGtin, finalSerial, {
+        mode: mode === 'combined' ? 'gs1' : mode === 'gs1-no-lot' ? 'gs1' : mode,
+        lot: (mode === 'gs1' || mode === 'combined') ? lot : undefined,
+        expiryYYMMDD: (mode === 'gs1' || mode === 'combined' || mode === 'gs1-no-lot') ? expiry : undefined,
       });
       setGeneratedCode(code);
-      setGeneratedAppKey(appKey(gtin, serial));
+      setGeneratedAppKey(appKey(finalGtin, finalSerial));
     } catch (err) {
       console.error('Error generating code:', err);
     }
@@ -106,8 +128,23 @@ export default function SerializationPage() {
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Encoding Mode
                 </label>
-                <div className="flex gap-3">
-                  <label className="flex items-center cursor-pointer">
+                <div className="grid grid-cols-1 gap-2">
+                  <label className="flex items-center cursor-pointer group hover:bg-slate-50 p-2 rounded-md transition-colors">
+                    <input
+                      type="radio"
+                      value="combined"
+                      checked={mode === 'combined'}
+                      onChange={() => setMode('combined')}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-slate-900 flex items-center gap-2">
+                      Combined Input (Parse GTIN+Serial from single string)
+                      <span className="inline-flex items-center px-2 py-0.5 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full">
+                        RECOMMENDED
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-center cursor-pointer group hover:bg-slate-50 p-2 rounded-md transition-colors">
                     <input
                       type="radio"
                       value="gs1"
@@ -116,10 +153,22 @@ export default function SerializationPage() {
                       className="mr-2"
                     />
                     <span className="text-sm text-slate-900">
-                      GS1 (GTIN + Serial + Lot + Expiry)
+                      GS1 Full (GTIN + Serial + Lot + Expiry)
                     </span>
                   </label>
-                  <label className="flex items-center cursor-pointer">
+                  <label className="flex items-center cursor-pointer group hover:bg-slate-50 p-2 rounded-md transition-colors">
+                    <input
+                      type="radio"
+                      value="gs1-no-lot"
+                      checked={mode === 'gs1-no-lot'}
+                      onChange={() => setMode('gs1-no-lot')}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-slate-900">
+                      GS1 No Lot (GTIN + Serial + Expiry only)
+                    </span>
+                  </label>
+                  <label className="flex items-center cursor-pointer group hover:bg-slate-50 p-2 rounded-md transition-colors">
                     <input
                       type="radio"
                       value="plain"
@@ -134,62 +183,90 @@ export default function SerializationPage() {
                 </div>
               </div>
 
-              {/* GTIN */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  GTIN (8/12/13/14 digits)
-                </label>
-                <input
-                  type="text"
-                  value={gtin}
-                  onChange={(e) => setGtin(e.target.value.replace(/\D/g, ''))}
-                  maxLength={14}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400 bg-white text-slate-900"
-                  placeholder="12345600001234"
-                />
-                {gtinValidation && !gtinValidation.checkDigitValid && (
-                  <div className="mt-1.5">
-                    <p className="text-xs text-orange-600">
-                      {enforceCheckDigit ? 'Invalid check digit' : 'Warning: Check digit mismatch'}
-                    </p>
-                    <button
-                      onClick={handleFixGtin}
-                      className="mt-1 text-xs text-slate-600 hover:text-slate-900 underline"
-                    >
-                      Fix to: {gtinValidation.corrected}
-                    </button>
-                  </div>
-                )}
-                <label className="flex items-center mt-2 cursor-pointer">
+              {/* Combined Input Mode */}
+              {mode === 'combined' && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Combined GTIN+Serial String
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={enforceCheckDigit}
-                    onChange={(e) => setEnforceCheckDigit(e.target.checked)}
-                    className="mr-2 w-4 h-4 text-slate-900 rounded border-slate-300 focus:ring-2 focus:ring-slate-400 focus:ring-offset-0"
+                    type="text"
+                    value={combinedInput}
+                    onChange={(e) => setCombinedInput(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400 bg-white text-slate-900 font-mono"
+                    placeholder="123456000012343000000000000013"
                   />
-                  <span className="text-xs text-slate-600">
-                    Enforce valid GS1 check digit
-                  </span>
-                </label>
-              </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Enter GTIN and Serial concatenated together (e.g., 14-digit GTIN + serial)
+                  </p>
+                  {parseError && (
+                    <p className="mt-1.5 text-xs text-red-600">
+                      {parseError}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* GTIN */}
+              {mode !== 'combined' && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    GTIN (8/12/13/14 digits)
+                  </label>
+                  <input
+                    type="text"
+                    value={gtin}
+                    onChange={(e) => setGtin(e.target.value.replace(/\D/g, ''))}
+                    maxLength={14}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400 bg-white text-slate-900"
+                    placeholder="12345600001234"
+                  />
+                  {gtinValidation && !gtinValidation.checkDigitValid && (
+                    <div className="mt-1.5">
+                      <p className="text-xs text-orange-600">
+                        {enforceCheckDigit ? 'Invalid check digit' : 'Warning: Check digit mismatch'}
+                      </p>
+                      <button
+                        onClick={handleFixGtin}
+                        className="mt-1 text-xs text-slate-600 hover:text-slate-900 underline"
+                      >
+                        Fix to: {gtinValidation.corrected}
+                      </button>
+                    </div>
+                  )}
+                  <label className="flex items-center mt-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enforceCheckDigit}
+                      onChange={(e) => setEnforceCheckDigit(e.target.checked)}
+                      className="mr-2 w-4 h-4 text-slate-900 rounded border-slate-300 focus:ring-2 focus:ring-slate-400 focus:ring-offset-0"
+                    />
+                    <span className="text-xs text-slate-600">
+                      Enforce valid GS1 check digit
+                    </span>
+                  </label>
+                </div>
+              )}
 
               {/* Serial */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Serial Number (up to 20 alphanumeric)
-                </label>
-                <input
-                  type="text"
-                  value={serial}
-                  onChange={(e) => setSerial(e.target.value)}
-                  maxLength={20}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400 bg-white text-slate-900"
-                  placeholder="3000000000000013"
-                />
-              </div>
+              {mode !== 'combined' && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Serial Number (up to 20 alphanumeric)
+                  </label>
+                  <input
+                    type="text"
+                    value={serial}
+                    onChange={(e) => setSerial(e.target.value)}
+                    maxLength={20}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400 bg-white text-slate-900"
+                    placeholder="3000000000000013"
+                  />
+                </div>
+              )}
 
-              {/* Lot (GS1 only) */}
-              {mode === 'gs1' && (
+              {/* Lot (GS1 Full mode only) */}
+              {(mode === 'gs1' || mode === 'combined') && (
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Lot Number (up to 20 alphanumeric)
@@ -205,8 +282,8 @@ export default function SerializationPage() {
                 </div>
               )}
 
-              {/* Expiry (GS1 only) */}
-              {mode === 'gs1' && (
+              {/* Expiry (All GS1 modes) */}
+              {(mode === 'gs1' || mode === 'combined' || mode === 'gs1-no-lot') && (
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Expiry Date (YYMMDD)
@@ -231,9 +308,11 @@ export default function SerializationPage() {
               <button
                 onClick={handleGenerate}
                 disabled={
-                  !gtin ||
-                  !serial ||
+                  (mode === 'combined' && !combinedInput) ||
+                  (mode !== 'combined' && (!gtin || !serial)) ||
                   (mode === 'gs1' && (!lot || expiry.length !== 6)) ||
+                  (mode === 'combined' && (!lot || expiry.length !== 6)) ||
+                  (mode === 'gs1-no-lot' && expiry.length !== 6) ||
                   (enforceCheckDigit && gtinValidation !== null && !gtinValidation.checkDigitValid)
                 }
                 className="w-full px-4 py-2 bg-slate-900 text-white rounded-md hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed font-medium transition-colors text-sm"
@@ -250,7 +329,11 @@ export default function SerializationPage() {
                     bcid={generatedCode.bcid}
                     text={generatedCode.text}
                     appKey={generatedAppKey}
-                    symbologyBadge={mode === 'gs1' ? ']d2 GS1' : 'DataMatrix'}
+                    symbologyBadge={
+                      mode === 'plain' ? 'DataMatrix' :
+                      mode === 'gs1-no-lot' ? ']d2 GS1 (No Lot)' :
+                      ']d2 GS1'
+                    }
                     title="Serialization Barcode"
                   />
 
@@ -266,15 +349,15 @@ export default function SerializationPage() {
                       <p>
                         <strong>Serial:</strong> {serial}
                       </p>
-                      {mode === 'gs1' && (
-                        <>
-                          <p>
-                            <strong>Lot:</strong> {lot}
-                          </p>
-                          <p>
-                            <strong>Expiry:</strong> {expiry}
-                          </p>
-                        </>
+                      {(mode === 'gs1' || mode === 'combined') && (
+                        <p>
+                          <strong>Lot:</strong> {lot}
+                        </p>
+                      )}
+                      {(mode === 'gs1' || mode === 'combined' || mode === 'gs1-no-lot') && (
+                        <p>
+                          <strong>Expiry:</strong> {expiry}
+                        </p>
                       )}
                       <p>
                         <strong>Symbology:</strong> {generatedCode.bcid === 'gs1datamatrix' ? 'GS1 DataMatrix' : 'DataMatrix'}
@@ -297,10 +380,16 @@ export default function SerializationPage() {
             </h3>
             <div className="space-y-2.5 text-sm text-slate-700">
               <p>
-                <strong>GS1 Mode:</strong> Encodes GTIN (AI 01), Serial (AI 21), Lot (AI 10), and Expiry (AI 17) as GS1 DataMatrix. This is the industry standard for pharmaceutical unit serialization.
+                <strong>GS1 Full:</strong> Encodes GTIN (AI 01), Serial (AI 21), Lot (AI 10), and Expiry (AI 17) as GS1 DataMatrix. This is the industry standard for pharmaceutical unit serialization.
+              </p>
+              <p>
+                <strong>GS1 No Lot:</strong> Encodes GTIN (AI 01), Serial (AI 21), and Expiry (AI 17) only - omits lot number. Useful when lot tracking is not required.
               </p>
               <p>
                 <strong>Plain Mode:</strong> Encodes only GTIN and Serial as a plain DataMatrix without GS1 Application Identifiers. Use this for internal tracking or non-GS1 systems.
+              </p>
+              <p>
+                <strong>Combined Input:</strong> Automatically parses GTIN and Serial from a single concatenated string (e.g., "123456000012343000000000000013"). The app detects GTIN length and separates it from the serial.
               </p>
               <p>
                 <strong>App Key:</strong> The combination of GTIN and Serial uniquely identifies this unit across your supply chain.
